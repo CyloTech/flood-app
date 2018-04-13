@@ -101,6 +101,9 @@ dht.mode.set = auto
 # 
 dht.port.set=DHT_PORT
 
+# Disable SSL verification
+network.http.ssl_verify_peer.set=0
+
 # Enable peer exchange (for torrents not marked private)
 #
 protocol.pex.set = yes
