@@ -10,7 +10,7 @@ const CONFIG = {
     host: 'localhost',
     port: 5000,
     socket: true,
-    socketPath: '/tmp/rtorrent.sock'
+    socketPath: '/torrents/config/rtorrent/.rtorrent.sock'
   }
 };
 
