@@ -1,4 +1,4 @@
-# Appbox ruTorrent 3.8-15 config
+# Appbox ruTorrent 3.8-16 config
 
 execute.nothrow = rm,/torrents/config/rtorrent/.rtorrent.sock
 network.scgi.open_local = /torrents/config/rtorrent/.rtorrent.sock

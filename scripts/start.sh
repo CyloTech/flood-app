@@ -3,6 +3,44 @@ set -x
 
 if [[ ! $(grep '3.8-15' /torrents/config/rtorrent/.rtorrent.rc) ]]; then
     rm -rf /torrents/config/rtorrent/.rtorrent.rc
+    rm -rf /flood-db/users.db
+    cd /usr/src/app
+    npm start &
+
+    sleep 10
+    URL="http://${DOMAIN}/auth/register"
+    echo "*****************************************************************************************"
+    echo " Setting Username & Password for ${USERNAME}"
+    echo " URL: ${URL}"
+    echo "*****************************************************************************************"
+    curl --retry 100 -X POST -H "Content-Type: application/json" -d '{"username":"'"${USERNAME}"'", "password": "'"${PASSWORD}"'"}' ${URL};
+
+    echo "*****************************************************************************************"
+    echo " Restarting Node/Flood "
+    echo "*****************************************************************************************"
+
+    kill -9 $(pgrep node)
+fi
+
+if [[ $(grep '3.8-15' /torrents/config/rtorrent/.rtorrent.rc) ]]; then
+    sed -i 's/3.8-15/3.8-16/g' /torrents/config/rtorrent/.rtorrent.rc
+    rm -rf /flood-db/users.db
+    cd /usr/src/app
+    npm start &
+
+    sleep 10
+    URL="http://${DOMAIN}/auth/register"
+    echo "*****************************************************************************************"
+    echo " Setting Username & Password for ${USERNAME}"
+    echo " URL: ${URL}"
+    echo "*****************************************************************************************"
+    curl --retry 100 -X POST -H "Content-Type: application/json" -d '{"username":"'"${USERNAME}"'", "password": "'"${PASSWORD}"'"}' ${URL};
+
+    echo "*****************************************************************************************"
+    echo " Restarting Node/Flood "
+    echo "*****************************************************************************************"
+
+    kill -9 $(pgrep node)
 fi
 
 ###########################[ SUPERVISOR SCRIPTS ]###############################
@@ -57,6 +95,10 @@ else
     sed -i 's#dht.port.set=[0-9]*#dht.port.set='${DHT_PORT}'#g' /torrents/config/rtorrent/.rtorrent.rc
 fi
 
+if [ ! -f /home/flood/.rtorrent.rc ]; then
+    ln -s /torrents/config/rtorrent/.rtorrent.rc /home/flood/
+fi
+
 rm -f /torrents/config/rtorrent/session/rtorrent.lock
 
 ###########################[ FLOOD SETUP ]###############################
@@ -84,6 +126,9 @@ if [ ! -f /torrents/config/flood/config.js ]; then
     echo "*****************************************************************************************"
 
     kill -9 $(pgrep node)
+else
+    # Reset in case of update
+    cp /sources/config.js /torrents/config/flood/config.js
 fi
 
 ls -d /torrents/* | grep -v home | xargs -d "\n" chown -R flood:flood
