@@ -119,7 +119,11 @@ if [ ! -f /torrents/config/flood/config.js ]; then
     echo " Setting Username & Password for ${USERNAME}"
     echo " URL: ${URL}"
     echo "*****************************************************************************************"
-    curl --retry 100 -X POST -H "Content-Type: application/json" -d '{"username":"'"${USERNAME}"'", "password": "'"${PASSWORD}"'"}' ${URL};
+
+    until [[ $(curl -i -X POST -H "Content-Type: application/json" -d '{"username":"'"${USERNAME}"'", "password": "'"${PASSWORD}"'"}' ${URL} | grep '200') ]]
+        do
+        sleep 5
+    done
 
     echo "*****************************************************************************************"
     echo " Restarting Node/Flood "
@@ -139,7 +143,10 @@ chown -R flood:flood /usr/src/app
 
 if [ ! -f /etc/app_configured ]; then
     touch /etc/app_configured
-    curl -i -H "Accept: application/json" -H "Content-Type:application/json" -X POST "https://api.cylo.io/v1/apps/installed/$INSTANCE_ID"
+    until [[ $(curl -i -H "Accept: application/json" -H "Content-Type:application/json" -X POST "https://api.cylo.io/v1/apps/installed/${INSTANCE_ID}" | grep '200') ]]
+        do
+        sleep 5
+    done
 fi
 
 exec /usr/bin/supervisord -n -c /etc/supervisord.conf
