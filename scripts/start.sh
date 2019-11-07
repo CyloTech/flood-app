@@ -1,48 +1,6 @@
 #!/usr/bin/env bash
 set -x
 
-if [[ ! $(grep '3.8-15' /torrents/config/rtorrent/.rtorrent.rc) ]]; then
-    rm -rf /torrents/config/rtorrent/.rtorrent.rc
-    rm -rf /flood-db/users.db
-    cd /usr/src/app
-    npm start &
-
-    sleep 10
-    URL="http://${DOMAIN}/auth/register"
-    echo "*****************************************************************************************"
-    echo " Setting Username & Password for ${USERNAME}"
-    echo " URL: ${URL}"
-    echo "*****************************************************************************************"
-    curl --retry 100 -X POST -H "Content-Type: application/json" -d '{"username":"'"${USERNAME}"'", "password": "'"${PASSWORD}"'"}' ${URL};
-
-    echo "*****************************************************************************************"
-    echo " Restarting Node/Flood "
-    echo "*****************************************************************************************"
-
-    kill -9 $(pgrep node)
-fi
-
-if [[ $(grep '3.8-15' /torrents/config/rtorrent/.rtorrent.rc) ]]; then
-    sed -i 's/3.8-15/3.8-16/g' /torrents/config/rtorrent/.rtorrent.rc
-    rm -rf /flood-db/users.db
-    cd /usr/src/app
-    npm start &
-
-    sleep 10
-    URL="http://${DOMAIN}/auth/register"
-    echo "*****************************************************************************************"
-    echo " Setting Username & Password for ${USERNAME}"
-    echo " URL: ${URL}"
-    echo "*****************************************************************************************"
-    curl --retry 100 -X POST -H "Content-Type: application/json" -d '{"username":"'"${USERNAME}"'", "password": "'"${PASSWORD}"'"}' ${URL};
-
-    echo "*****************************************************************************************"
-    echo " Restarting Node/Flood "
-    echo "*****************************************************************************************"
-
-    kill -9 $(pgrep node)
-fi
-
 ###########################[ SUPERVISOR SCRIPTS ]###############################
 
 mkdir -p /etc/supervisor/conf.d
@@ -100,6 +58,48 @@ if [ ! -f /home/flood/.rtorrent.rc ]; then
 fi
 
 rm -f /torrents/config/rtorrent/session/rtorrent.lock
+
+if [[ ! $(grep '3.8-15' /torrents/config/rtorrent/.rtorrent.rc) && ! $(grep '3.8-16' /torrents/config/rtorrent/.rtorrent.rc) ]]; then
+    rm -rf /torrents/config/rtorrent/.rtorrent.rc
+    rm -rf /flood-db/users.db
+    cd /usr/src/app
+    npm start &
+
+    sleep 10
+    URL="http://${DOMAIN}/auth/register"
+    echo "*****************************************************************************************"
+    echo " Setting Username & Password for ${USERNAME}"
+    echo " URL: ${URL}"
+    echo "*****************************************************************************************"
+    curl --retry 100 -X POST -H "Content-Type: application/json" -d '{"username":"'"${USERNAME}"'", "password": "'"${PASSWORD}"'"}' ${URL};
+
+    echo "*****************************************************************************************"
+    echo " Restarting Node/Flood "
+    echo "*****************************************************************************************"
+
+    kill -9 $(pgrep node)
+fi
+
+if [[ $(grep '3.8-15' /torrents/config/rtorrent/.rtorrent.rc) ]]; then
+    sed -i 's/3.8-15/3.8-16/g' /torrents/config/rtorrent/.rtorrent.rc
+    rm -rf /flood-db/users.db
+    cd /usr/src/app
+    npm start &
+
+    sleep 10
+    URL="http://${DOMAIN}/auth/register"
+    echo "*****************************************************************************************"
+    echo " Setting Username & Password for ${USERNAME}"
+    echo " URL: ${URL}"
+    echo "*****************************************************************************************"
+    curl --retry 100 -X POST -H "Content-Type: application/json" -d '{"username":"'"${USERNAME}"'", "password": "'"${PASSWORD}"'"}' ${URL};
+
+    echo "*****************************************************************************************"
+    echo " Restarting Node/Flood "
+    echo "*****************************************************************************************"
+
+    kill -9 $(pgrep node)
+fi
 
 ###########################[ FLOOD SETUP ]###############################
 
