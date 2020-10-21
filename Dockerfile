@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y git && \
     mediainfo \
     curl \
     wget \
+    nginx \
     supervisor \
     libcap2-bin \
     software-properties-common && \
@@ -28,10 +29,10 @@ RUN apt-get update && apt-get install -y git && \
     apt install -y \
     openssl lsb-release build-essential pkg-config \
     subversion git time lsof binutils tmux curl wget \
-    python-setuptools python-virtualenv python-dev \
+    python3-setuptools python3-virtualenv python3-dev \
     libssl-dev zlib1g-dev libncurses-dev libncursesw5-dev \
     libcppunit-dev autoconf automake libtool \
-    libffi-dev libxml2-dev libxslt1-dev nodejs=8.10.0~dfsg-2ubuntu0.2 nodejs-dev=8.10.0~dfsg-2ubuntu0.2 npm node-gyp
+    libffi-dev libxml2-dev libxslt1-dev nodejs npm node-gyp
 RUN adduser --system --disabled-password --home /home/flood --shell /sbin/nologin --group --uid 1000 flood
 RUN /bin/su -s /bin/bash -c "cd && \
 TERM=xterm git clone https://github.com/CyloTech/rtorrent-ps.git && \
@@ -41,7 +42,7 @@ cd && \
 rm -rf rtorrent-ps" flood
 
 RUN mkdir /usr/src/app && \
-    git clone https://github.com/jfurrow/flood.git /usr/src/app
+    git clone https://github.com/jesec/flood.git /usr/src/app
 ADD sources/config.js /usr/src/app/config.js
 RUN cd /usr/src/app && \
     npm install -g node-gyp && \
@@ -49,15 +50,17 @@ RUN cd /usr/src/app && \
     npm cache clean --force && \
     npm run build
 
-RUN setcap cap_net_bind_service=+ep /usr/bin/node
+# RUN setcap cap_net_bind_service=+ep /usr/bin/node
 ADD sources /sources
 ADD sources/supervisord.conf /etc/supervisord.conf
 ADD scripts/start.sh /scripts/start.sh
+ADD sources/nginx-site.conf /etc/nginx/sites-enabled/default
+ADD sources/nginx.conf /etc/nginx/nginx.conf
 RUN chmod -R +x /scripts
 
 RUN apt-get remove -y lsb-release pkg-config \
     subversion time lsof \
-    python-virtualenv python-dev \
+    python3-virtualenv python3-dev \
     zlib1g-dev libncurses-dev libncursesw5-dev \
     libcppunit-dev libffi-dev libxml2-dev libxslt1-dev
 RUN rm -rf /tmp/*
