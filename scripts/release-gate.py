@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import http.server
+import http.cookiejar
 import importlib.util
 import json
 import os
@@ -34,6 +35,7 @@ password = secrets.token_urlsafe(24)
 user = 'releasegate'
 callback_token = secrets.token_urlsafe(24)
 callbacks = []
+openers = {}
 auth = 'Basic ' + base64.b64encode((user + ':' + password).encode()).decode()
 
 
@@ -112,8 +114,10 @@ def url(name, path):
 def request(name, path, data=None, authenticated=True):
     headers = {'Authorization': auth} if authenticated else {}
     if data is not None:
-        headers['Content-Type'] = 'text/xml'
-    with urllib.request.urlopen(urllib.request.Request(url(name, path), data=data, headers=headers), timeout=10) as response:
+        headers['Content-Type'] = 'application/json' if path.startswith('/api/') else 'text/xml'
+    if name not in openers:
+        openers[name] = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+    with openers[name].open(urllib.request.Request(url(name, path), data=data, headers=headers), timeout=10) as response:
         return response.status, response.read()
 
 
@@ -156,6 +160,7 @@ def check_web(name):
         path = asset.decode()
         if path.startswith('/'):
             assert len(request(name, path)[1]) > 100
+    assert request(name, '/api/auth/authenticate', json.dumps({'username': user, 'password': password}).encode())[0] == 200
     assert request(name, '/api/torrents')[0] == 200
 
 
