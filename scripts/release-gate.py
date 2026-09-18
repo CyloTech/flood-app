@@ -243,7 +243,14 @@ try:
     check_web(fresh)
     check_runtime(fresh)
     fresh_user_id = native_user_id(fresh)
+    assert rpc(fresh, 'dht.override_port') == 49161
+    rpc(fresh, 'dht.mode.set', 'on')
+    for _ in range(20):
+        if rpc(fresh, 'dht.port') == 49161:
+            break
+        time.sleep(1)
     assert rpc(fresh, 'dht.port') == 49161
+    rpc(fresh, 'dht.mode.set', 'auto')
     assert rpc(fresh, 'network.port_range') == '49160-49160'
     for _ in range(30):
         if callback_token in callbacks:
