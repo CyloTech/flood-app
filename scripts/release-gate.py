@@ -231,6 +231,12 @@ def check_persisted(name, fixture):
     config = command(['docker', 'exec', name, 'cat', '/torrents/config/rtorrent/.rtorrent.rc'])
     assert b'# release-gate preserved configuration' in config
     check_web(name)
+    for _ in range(20):
+        visible = json.loads(request(name, '/api/torrents')[1])
+        if torrent_hash in json.dumps(visible).upper():
+            break
+        time.sleep(1)
+    assert torrent_hash in json.dumps(visible).upper(), 'Persisted torrent missing from Flood API'
 
 
 try:
@@ -276,6 +282,15 @@ try:
     assert native_user_id(upgraded) == baseline_user_id
     check_runtime(upgraded)
     print('PASS upgrade: current catalog image data, session, settings and authentication preserved', flush=True)
+    replacement = secrets.token_urlsafe(24)
+    command(['docker', 'exec', '-i', upgraded, '/scripts/reset-password.py'], data=replacement.encode())
+    password = replacement
+    auth = 'Basic ' + base64.b64encode((user + ':' + password).encode()).decode()
+    openers.pop(upgraded, None)
+    wait_ready(upgraded, '0.16.23')
+    check_web(upgraded)
+    assert native_user_id(upgraded) == baseline_user_id
+    print('PASS password reset: HTTP and native Flood authentication updated without replacing user', flush=True)
 finally:
     for name in reversed(containers):
         try:
