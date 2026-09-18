@@ -62,7 +62,8 @@ class Callback(http.server.BaseHTTPRequestHandler):
         pass
 
 
-server = http.server.ThreadingHTTPServer(('0.0.0.0', 0), Callback)
+bridge = json.loads(command(['docker', 'network', 'inspect', 'bridge']))[0]['IPAM']['Config'][0]['Gateway']
+server = http.server.ThreadingHTTPServer((bridge, 0), Callback)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 
 
@@ -164,6 +165,30 @@ def check_web(name):
     assert request(name, '/api/torrents')[0] == 200
 
 
+def check_runtime(name):
+    limits = command(['docker', 'inspect', '--format', '{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{.HostConfig.MemoryReservation}} {{.HostConfig.NanoCpus}}', name]).decode().strip()
+    assert limits == '0 0 0 0', 'RAM/CPU runtime limits changed'
+    for service in ('flood', 'rtorrent'):
+        pid = command(['docker', 'exec', name, 'supervisorctl', '-c', '/etc/supervisord.conf', 'pid', service]).decode().strip()
+        assert pid.isdecimal() and int(pid) > 0
+        status = command(['docker', 'exec', name, 'cat', '/proc/' + pid + '/status']).decode()
+        assert re.search(r'^Uid:\s+1000\s+1000\s+1000\s+1000$', status, re.M), service + ' is not UID 1000'
+
+
+def native_user_id(name):
+    data = command(['docker', 'exec', name, 'cat', '/home/flood/.local/db/users.db']).decode()
+    records = {}
+    for line in data.splitlines():
+        record = json.loads(line)
+        if record.get('$$deleted'):
+            records.pop(record['_id'], None)
+        elif '_id' in record:
+            records[record['_id']] = record
+    matches = [record['_id'] for record in records.values() if record.get('username') == user]
+    assert len(matches) == 1
+    return matches[0]
+
+
 def bencode(value):
     if isinstance(value, int):
         return b'i' + str(value).encode() + b'e'
@@ -215,6 +240,8 @@ try:
     fresh = launch('fresh', image, storage('fresh'))
     wait_ready(fresh, '0.16.23')
     check_web(fresh)
+    check_runtime(fresh)
+    fresh_user_id = native_user_id(fresh)
     assert rpc(fresh, 'dht.port') == 49161
     assert rpc(fresh, 'network.port_range') == '49160-49160'
     for _ in range(30):
@@ -227,15 +254,19 @@ try:
     command(['docker', 'restart', '--time', '45', fresh])
     wait_ready(fresh, '0.16.23')
     check_persisted(fresh, fixture)
+    assert native_user_id(fresh) == fresh_user_id
     print('PASS restart: data, torrent state, settings and authentication preserved', flush=True)
     upgrade_storage = storage('upgrade')
     baseline = launch('baseline', registry.PREVIOUS, upgrade_storage, baseline=True)
     wait_ready(baseline, None)
     baseline_fixture = seed(baseline)
+    baseline_user_id = native_user_id(baseline)
     command(['docker', 'stop', '--time', '45', baseline])
     upgraded = launch('upgraded', image, upgrade_storage)
     wait_ready(upgraded, '0.16.23')
     check_persisted(upgraded, baseline_fixture)
+    assert native_user_id(upgraded) == baseline_user_id
+    check_runtime(upgraded)
     print('PASS upgrade: current catalog image data, session, settings and authentication preserved', flush=True)
 finally:
     for name in reversed(containers):
