@@ -137,14 +137,15 @@ def wait_ready(name, expected):
                 assert version == expected, version
             return
         except Exception as error:
-            last_error = type(error).__name__
+            last_error = type(error).__name__ + ': ' + str(error)
             time.sleep(2)
     # Logs are from disposable synthetic-data fixtures only; redact credentials.
-    logs = command(['docker', 'logs', '--tail', '60', name]).decode(errors='replace')
+    logs = command(['docker', 'logs', '--tail', '400', name]).decode(errors='replace')
     for secret in (password, callback_token, auth):
         logs = logs.replace(secret, '[redacted]')
     logs = re.sub(r'(?im)^.*(?:password|authorization|callback_token).*$','[authentication detail omitted]',logs)
-    print(logs[-6000:], flush=True)
+    lines = [line for line in logs.splitlines() if not any(noise in line for noise in ('flood:web-server', 'GET / '))]
+    print('\n'.join(lines)[-6000:], flush=True)
     raise RuntimeError('Readiness failed: ' + last_error)
 
 
