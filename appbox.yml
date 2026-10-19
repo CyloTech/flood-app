@@ -1,0 +1,31 @@
+app:
+  display_name: Flood
+  publisher: jesec
+  description: A modern web UI for rTorrent
+image:
+  name: repo.cylo.net/flood
+  version: 4.16.1-0.16.23-2
+  tag: 4.16.1-0.16.23-2
+  digest: repo.cylo.net/flood@sha256:2714c4f24faabe999a1c23cb75110f006c3dcf81216ef5c8b9ffe96e38a784f5
+container:
+  memory: 0
+  memory_swap: 0
+  memory_reservation: 0
+  cpus: 0
+  init: true
+  pids_limit: 0
+ports:
+  tcp:
+    dynamic: 1
+  udp:
+    dynamic: 1
+networking:
+  is_web_app: true
+  subdomain: flood
+behavior:
+  app_slots: 1
+  allow_downgrade: true
+  expect_callback: true
+  callback_requires_auth: false
+# Existing app-level binds, environment and installation fields are inherited.
+# In particular preserve /torrents and the private /home/flood/.local mount.
