@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import time
 import urllib.request
+from urllib.error import HTTPError
 from urllib.parse import parse_qs
 from healthcheck import healthy
 
@@ -45,9 +46,18 @@ if os.environ.get('SKIP_APPBOX_CALLBACK') != '1':
     for attempt in range(120):
         try:
             with urllib.request.urlopen(urllib.request.Request(url, data=b'{}', headers=headers), timeout=15) as response:
-                if response.status != 200:
+                if not 200 <= response.status < 300:
                     raise ValueError('Callback status')
             break
+        except HTTPError as error:
+            # Only 408, 429 and 5xx can succeed later. The API accepts one
+            # installed callback per install or update and rejects the rest
+            # (401 once the token is used or cleared), so any other status is
+            # final. Exit 0 so supervisord does not start the loop again.
+            if error.code not in (408, 429) and error.code < 500:
+                print('Install callback rejected with HTTP %d; not retrying' % error.code, flush=True)
+                raise SystemExit(0)
+            time.sleep(5)
         except Exception:
             time.sleep(5)
     else:
