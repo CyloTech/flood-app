@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Exercise the exact release image, with the accepted session-race exception.
 
-The operator authorized release on 2026-09-19 with rTorrent issue #2017 open.
-Persistence fixtures wait for each save to commit and do not cover overlapping
-saves; the separate regression test reproduces that known upstream defect.
+The operator authorized release on 2026-09-19 with rTorrent issue #2017 open,
+and it is still open in 0.16.25. Persistence fixtures wait for each save to
+commit and do not cover overlapping saves.
 """
 import base64
 import hashlib
@@ -44,6 +44,9 @@ callbacks = []
 callback_agents = []
 openers = {}
 auth = 'Basic ' + base64.b64encode((user + ':' + password).encode()).decode()
+RTORRENT = '0.16.25'
+CURRENT_RTORRENT = '0.16.23'
+FILES_MIN = 'system.sockets.files.min_alloc.set = 2048\nsystem.sockets.max_size.set = 3072\n'
 
 
 def command(args, data=None, timeout=180):
@@ -217,6 +220,23 @@ def check_runtime(name):
         assert re.search(r'^Uid:\s+1000\s+1000\s+1000\s+1000$', status, re.M), service + ' is not UID 1000'
 
 
+def check_limits(name, max_size=3072, max_files=2048):
+    # rTorrent sizes its open-file cache from the socket budget; 0.16.23 ran
+    # Appbox with 64 files and aborted while evicting them.
+    pid = command(['docker', 'exec', name, 'supervisorctl', '-c', '/etc/supervisord.conf', 'pid', 'rtorrent']).decode().strip()
+    limits = command(['docker', 'exec', name, 'cat', '/proc/' + pid + '/limits']).decode()
+    files = re.search(r'^Max open files\s+(\d+)\s+(\d+|unlimited)', limits, re.M)
+    assert files and int(files.group(1)) == min(8192, int(files.group(2)) if files.group(2).isdecimal() else 8192), 'rTorrent descriptor limit not raised'
+    assert re.search(r'^Max core file size\s+0\s', limits, re.M), 'rTorrent core dumps still enabled'
+    assert rpc(name, 'system.sockets.max_size') == max_size
+    assert rpc(name, 'network.max_open_files') == max_files
+    assert rpc(name, 'system.sockets.files.max_size') == max_files
+
+
+def config_text(name):
+    return command(['docker', 'exec', name, 'cat', '/torrents/config/rtorrent/.rtorrent.rc']).decode()
+
+
 def native_user_id(name):
     data = command(['docker', 'exec', name, 'cat', '/home/flood/.local/db/users.db']).decode()
     records = {}
@@ -310,9 +330,11 @@ try:
     assert '4.16.1' in version
     print('ACCEPTED RISK: rTorrent #2017; restart and upgrade tests use completed saves', flush=True)
     fresh = launch('fresh', image, storage('fresh'))
-    wait_ready(fresh, '0.16.23')
+    wait_ready(fresh, RTORRENT)
     check_web(fresh)
     check_runtime(fresh)
+    check_limits(fresh)
+    assert FILES_MIN in config_text(fresh) and not re.search(r'^network\.max_open_', config_text(fresh), re.M)
     fresh_user_id = native_user_id(fresh)
     assert rpc(fresh, 'dht.override_port') == 49161
     rpc(fresh, 'dht.mode.set', '', 'on')
@@ -332,24 +354,39 @@ try:
     fixture = seed(fresh)
     print('PASS fresh: versions, HTTP/assets, authentication, RPC, ports, callback and torrent session', flush=True)
     command(['docker', 'restart', '--time', '45', fresh])
-    wait_ready(fresh, '0.16.23')
+    wait_ready(fresh, RTORRENT)
     check_persisted(fresh, fixture)
     check_runtime(fresh)
+    check_limits(fresh)
     assert native_user_id(fresh) == fresh_user_id
     print('PASS restart: data, torrent state, settings and authentication preserved', flush=True)
+    stress = json.loads(command([sys.executable, str(Path(__file__).parents[1] / 'tests' / 'many-files-stress.py'),
+                                 image, '4'], timeout=2400).decode().strip().splitlines()[-1])
+    assert stress['rtorrent_exits'] == 0, 'rTorrent exited under many-file load: ' + json.dumps(stress)
+    assert stress['cycles'] == 4 and not stress['errors'], json.dumps(stress)
+    assert stress['max_open_files'] == 2048, json.dumps(stress)
+    print('PASS many files: 2600/1200-file torrents started, hashed, stopped and erased 4 times; open files peaked at',
+          stress['open_files_peak'], flush=True)
     # Exercise the separate-token contract too, including the first release's
     # data and a downgrade back to the same engine/UI version.
     current_storage = storage('current')
     current = launch('current', registry.CURRENT, current_storage, callback_style='header')
-    wait_ready(current, '0.16.23')
+    wait_ready(current, CURRENT_RTORRENT)
     current_fixture = seed(current)
     current_user_id = native_user_id(current)
+    shipped = config_text(current)
+    assert re.search(r'^network\.max_open_files\.set = 600$', shipped, re.M)
+    assert re.search(r'^network\.max_open_sockets\.set = 512$', shipped, re.M)
     command(['docker', 'stop', '--time', '45', current])
     callbacks.clear()
     repaired = launch('repaired', image, current_storage)
-    wait_ready(repaired, '0.16.23')
+    wait_ready(repaired, RTORRENT)
     check_persisted(repaired, current_fixture)
     assert native_user_id(repaired) == current_user_id
+    migrated = config_text(repaired)
+    assert FILES_MIN in migrated and not re.search(r'^network\.max_open_', migrated, re.M)
+    command(['docker', 'exec', repaired, 'test', '-f', '/torrents/config/rtorrent/.rtorrent.rc.pre-0.16.25'])
+    check_limits(repaired)
     for _ in range(30):
         if callback_token in callbacks:
             break
@@ -357,14 +394,28 @@ try:
     assert callback_token in callbacks, 'Legacy-format upgrade callback missing'
     command(['docker', 'stop', '--time', '45', repaired])
     command(['docker', 'start', current])
-    wait_ready(current, '0.16.23')
+    wait_ready(current, CURRENT_RTORRENT)
     check_persisted(current, current_fixture)
     assert native_user_id(current) == current_user_id
     command(['docker', 'stop', '--time', '45', current])
-    print('PASS current-release upgrade and downgrade: data and user preserved; legacy callback acknowledged', flush=True)
+    print('PASS current-release upgrade and downgrade: data and user preserved; limits migrated; legacy callback acknowledged', flush=True)
+    # A budget the customer chose stays; it then decides the open-file count.
+    custom_storage = storage('custom')
+    custom = launch('custom', registry.CURRENT, custom_storage, callback_style='header')
+    wait_ready(custom, CURRENT_RTORRENT)
+    command(['docker', 'exec', custom, 'sed', '-i', 's/^network.max_open_sockets.set = 512$/network.max_open_sockets.set = 1500/',
+             '/torrents/config/rtorrent/.rtorrent.rc'])
+    command(['docker', 'stop', '--time', '45', custom])
+    customised = launch('customised', image, custom_storage, callback_style='header')
+    wait_ready(customised, RTORRENT)
+    kept = config_text(customised)
+    assert 'network.max_open_sockets.set = 1500' in kept and 'system.sockets' not in kept
+    check_limits(customised, max_size=1500, max_files=128)
+    command(['docker', 'stop', '--time', '45', customised])
+    print('PASS customised limits: socket budget preserved on upgrade', flush=True)
     callbacks.clear()
     header = launch('header', image, storage('header'), callback_style='header')
-    wait_ready(header, '0.16.23')
+    wait_ready(header, RTORRENT)
     for _ in range(30):
         if callback_token in callbacks:
             break
@@ -378,17 +429,18 @@ try:
     baseline_user_id = native_user_id(baseline)
     command(['docker', 'stop', '--time', '45', baseline])
     upgraded = launch('upgraded', image, upgrade_storage)
-    wait_ready(upgraded, '0.16.23')
+    wait_ready(upgraded, RTORRENT)
     check_persisted(upgraded, baseline_fixture)
     assert native_user_id(upgraded) == baseline_user_id
     check_runtime(upgraded)
+    check_limits(upgraded)
     print('PASS upgrade: current catalog image data, session, settings and authentication preserved', flush=True)
     replacement = secrets.token_urlsafe(24)
     command(['docker', 'exec', '-i', upgraded, '/scripts/reset-password.py'], data=replacement.encode())
     password = replacement
     auth = 'Basic ' + base64.b64encode((user + ':' + password).encode()).decode()
     openers.pop(upgraded, None)
-    wait_ready(upgraded, '0.16.23')
+    wait_ready(upgraded, RTORRENT)
     check_web(upgraded)
     assert native_user_id(upgraded) == baseline_user_id
     print('PASS password reset: HTTP and native Flood authentication updated without replacing user', flush=True)

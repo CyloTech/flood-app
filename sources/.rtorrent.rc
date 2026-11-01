@@ -65,11 +65,13 @@ trackers.numwant.set = 80
 
 protocol.encryption.set = allow_incoming,try_outgoing,enable_retry
 
-# Limits for file handle resources, this is optimized for
-# an `ulimit` of 1024 (a common default). You MUST leave
-# a ceiling of handles reserved for rTorrent's internal needs!
-network.max_open_files.set = 600
-network.max_open_sockets.set = 300
+# Limits for file handle resources. rTorrent 0.16 splits one descriptor
+# budget between peers, files and its own needs, and ignores the old
+# network.max_open_files.set. 3072 leaves 2048 open files and about 800
+# peer connections; the launcher raises the process limit to 8192 to cover
+# it. Keep this order: setting the budget applies the files minimum.
+system.sockets.files.min_alloc.set = 2048
+system.sockets.max_size.set = 3072
 
 # Memory resource usage (increase if you have a large number of items loaded,
 # and/or the available resources to spend)

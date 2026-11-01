@@ -30,6 +30,22 @@ sed -i -E \
     -e 's/^network\.max_open_sockets\.set[[:space:]]*=[[:space:]]*300[[:space:]]*$/network.max_open_sockets.set = 512/' \
     -e 's/^(encoding\.add[[:space:]]*=[[:space:]]*utf-?8[[:space:]]*)$/# UTF-8 is native in rTorrent 0.16: \1/I' \
     "$config"
+# rTorrent 0.16 ignores network.max_open_files.set and gives files 64 of a
+# 512 socket budget, so torrents with many files evict constantly. Replace
+# only the limits this image shipped; customised lines stay as they are.
+files_line='^network\.max_open_files\.set[[:space:]]*=[[:space:]]*600[[:space:]]*$'
+sockets_line='^network\.max_open_sockets\.set[[:space:]]*=[[:space:]]*512[[:space:]]*$'
+if grep -Eq "$sockets_line" "$config"; then
+    [[ -e "${config}.pre-0.16.25" ]] || cp -p "$config" "${config}.pre-0.16.25"
+    if grep -Eq "$files_line" "$config"; then
+        # The files minimum must precede the budget, which applies it.
+        sed -i -E -e "/${sockets_line}/d" \
+            -e "s/${files_line}/system.sockets.files.min_alloc.set = 2048\nsystem.sockets.max_size.set = 3072/" \
+            "$config"
+    else
+        sed -i -E "s/${sockets_line}/system.sockets.max_size.set = 3072/" "$config"
+    fi
+fi
 chown flood:flood "$config"
 ln -sfn "$config" /etc/rtorrent/rtorrent.rc
 rm -f /torrents/config/rtorrent/session/rtorrent.lock /torrents/config/rtorrent/rtorrent.sock

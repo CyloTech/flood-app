@@ -4,9 +4,9 @@ app:
   description: A modern web UI for rTorrent
 image:
   name: repo.cylo.net/flood
-  version: 4.16.1-0.16.23-2
-  tag: 4.16.1-0.16.23-2
-  digest: repo.cylo.net/flood@sha256:2714c4f24faabe999a1c23cb75110f006c3dcf81216ef5c8b9ffe96e38a784f5
+  version: 4.16.1-0.16.25
+  tag: 4.16.1-0.16.25
+  # The digest is recorded here once the image is published.
 container:
   memory: 0
   memory_swap: 0

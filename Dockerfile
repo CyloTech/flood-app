@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1
 FROM debian:trixie-slim AS rtorrent-build
-ARG RTORRENT_VERSION=0.16.23
-ARG LIBTORRENT_SHA256=888509f8836d2f0cf779f0e3cfcd2514f88ef8946a20e88b1ad3de9cbd900832
-ARG RTORRENT_SHA256=be8679cdc14be9bfe7044e09d50c822a85805ca79554436464822cd34a11798a
+ARG RTORRENT_VERSION=0.16.25
+ARG LIBTORRENT_SHA256=6266db1d5575d3b99846a4caad98e4c2a8aa6ad034d8b09e566d610123deb569
+ARG RTORRENT_SHA256=d9c17e0fae59f0cb7533966f3ed778e9df701ad84d5dd50e9bae2aefe0f00a2a
 RUN apt-get update \
     && apt-get download libeatmydata1 \
     && dpkg-deb -x libeatmydata1_*.deb /tmp/build-eatmydata \
@@ -25,7 +25,7 @@ RUN curl -fsSL -o rtorrent.tar.gz "https://github.com/rakshasa/rtorrent/releases
 FROM debian:trixie-slim
 ARG FLOOD_VERSION=4.16.1
 ARG FLOOD_SHA256=c979f1fd6cf309d143c2c7e9e13ae470f880df72a38f96f4bb4f813175c4ecee
-ENV LANG=C.UTF-8 FLOOD_VERSION=${FLOOD_VERSION} RTORRENT_VERSION=0.16.23
+ENV LANG=C.UTF-8 FLOOD_VERSION=${FLOOD_VERSION} RTORRENT_VERSION=0.16.25
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash ca-certificates curl gosu nginx supervisor python3 apache2-utils argon2 \
     mediainfo 7zip unzip libcurl4t64 libssl3t64 libncursesw6 libsigc++-3.0-0 \
@@ -43,7 +43,7 @@ COPY sources/nginx.conf /etc/nginx/nginx.conf
 COPY sources/nginx-site.conf /etc/nginx/sites-enabled/default
 COPY sources/supervisord.conf /etc/supervisord.conf
 COPY sources/services.conf /etc/supervisor/conf.d/flood.conf
-COPY scripts/start.sh scripts/rtcheck.py scripts/healthcheck.py scripts/callback.py scripts/bootstrap.py scripts/reset-password.py /scripts/
+COPY scripts/start.sh scripts/rtorrent-run.sh scripts/rtcheck.py scripts/healthcheck.py scripts/callback.py scripts/bootstrap.py scripts/reset-password.py /scripts/
 COPY moduser.sh /moduser.sh
 RUN ldconfig && chmod 755 /scripts/* /moduser.sh \
     && flood --version && rtorrent -h | head -1
