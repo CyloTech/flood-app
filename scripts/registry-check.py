@@ -3,7 +3,8 @@
 import subprocess
 import sys
 
-EXPECTED = 'repo.cylo.net/flood:4.16.1-0.16.23'
+EXPECTED = 'repo.cylo.net/flood:4.16.1-0.16.23-2'
+CURRENT = 'repo.cylo.net/flood@sha256:4eac12d71fb7e40b9938c9f9f6f6e59a600e3f6c9269ab31cb75a14c1b32bd49'
 PREVIOUS = 'repo.cylo.net/flood@sha256:1e94603a770407d55e148660712ee8c94a0599d325f98c094221ed4193cc78de'
 
 

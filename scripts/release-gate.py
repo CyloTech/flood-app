@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Exercise the exact release image on the dedicated builder before publication."""
+"""Exercise the exact release image, with the accepted session-race exception.
+
+The operator authorized release on 2026-09-19 with rTorrent issue #2017 open.
+Persistence fixtures wait for each save to commit and do not cover overlapping
+saves; the separate regression test reproduces that known upstream defect.
+"""
 import base64
 import hashlib
 import http.server
@@ -18,6 +23,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import parse_qs, urlsplit
 import uuid
 import xmlrpc.client
 
@@ -35,6 +41,7 @@ password = secrets.token_urlsafe(24)
 user = 'releasegate'
 callback_token = secrets.token_urlsafe(24)
 callbacks = []
+callback_agents = []
 openers = {}
 auth = 'Basic ' + base64.b64encode((user + ':' + password).encode()).decode()
 
@@ -52,8 +59,11 @@ def command(args, data=None, timeout=180):
 
 class Callback(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
-        if self.path == '/v1/apps/installed/900000082':
-            callbacks.append(self.headers.get('X-Cylo-Callback-Token'))
+        target = urlsplit(self.path)
+        received = self.headers.get('X-Cylo-Callback-Token') or parse_qs(target.query).get('callback_token', [None])[0]
+        if target.path == '/v1/apps/installed/900000082' and received == callback_token:
+            callbacks.append(received)
+            callback_agents.append(self.headers.get('User-Agent'))
             self.send_response(200)
         else:
             self.send_response(404)
@@ -77,7 +87,28 @@ def storage(suffix):
     return result
 
 
-def launch(suffix, selected_image, mounts, baseline=False):
+def launch(suffix, selected_image, mounts, baseline=False, callback_style='legacy'):
+    if baseline:
+        # Upgrade needs the old runtime and data formats, not an expensive copy-up
+        # of immutable dependencies. Prove those files are usable by UID 1000.
+        probe = """import os,stat
+assert os.geteuid()==1000
+count=0
+def failed(error):
+    raise error
+for folder,dirs,files in os.walk('/usr/src/app',onerror=failed):
+    assert os.access(folder,os.R_OK|os.X_OK),'Unreadable legacy directory'
+    for name in files:
+        path=os.path.join(folder,name)
+        mode=os.stat(path).st_mode
+        required=os.R_OK|(os.X_OK if mode & 0o111 else 0)
+        assert os.access(path,required),'Inaccessible legacy dependency'
+        count+=1
+assert count>100
+print('PASS legacy dependency access: UID 1000 can use',count,'files')
+"""
+        print(command(['docker', 'run', '--rm', '--network', 'none', '--user', '1000:1000',
+                       '--entrypoint', 'python3', selected_image, '-c', probe], timeout=180).decode().strip(), flush=True)
     name = run_id + '-' + suffix
     args = ['docker', 'create', '--platform', 'linux/amd64', '--name', name,
             '--label', 'appbox.release-gate=' + run_id, '--init',
@@ -85,8 +116,11 @@ def launch(suffix, selected_image, mounts, baseline=False):
             '-v', mounts[0] + ':/torrents', '-v', mounts[1] + ':/home/flood/.local',
             '-e', 'USERNAME=' + user, '-e', 'PASSWORD=' + password,
             '-e', 'LISTENING_PORT=49160', '-e', 'DHT_PORT=49161',
-            '-e', 'INSTANCE_ID=900000082', '-e', 'CALLBACK_TOKEN=' + callback_token,
             '-e', 'APPBOX_API_URL=http://host.docker.internal:' + str(server.server_port) + '/v1']
+    if callback_style == 'legacy':
+        args += ['-e', 'INSTANCE_ID=900000082?callback_token=' + callback_token]
+    else:
+        args += ['-e', 'INSTANCE_ID=900000082', '-e', 'CALLBACK_TOKEN=' + callback_token]
     if baseline:
         args += ['--entrypoint', '/bin/bash', selected_image, '/tmp/gate-start.sh']
     else:
@@ -97,6 +131,11 @@ def launch(suffix, selected_image, mounts, baseline=False):
         script = work / 'baseline-start.sh'
         command(['docker', 'cp', name + ':/scripts/start.sh', str(script)])
         source = script.read_text().replace('set -x', 'set +x')
+        # The access probe above permits skipping only the legacy dependency-tree
+        # ownership rewrite. Persistent data ownership and the old runtime stay intact.
+        ownership = 'chown -R flood:flood /usr/src/app'
+        assert source.count(ownership) == 1
+        source = source.replace(ownership, 'chown flood:flood /usr/src/app')
         # Only redirect the callback of this disposable fixture to our local stub.
         for domain in ('api.cylo.io', 'api.cylo.net'):
             source = source.replace('https://' + domain + '/v1/apps/installed/',
@@ -129,7 +168,9 @@ def rpc(name, method, *params):
 
 def wait_ready(name, expected):
     last_error = ''
-    for attempt in range(90):
+    # The legacy image recursively chowns bundled dependencies before serving.
+    # Allow its first boot longer while retaining the current-image timeout.
+    for attempt in range(450 if expected is None else 90):
         try:
             assert request(name, '/')[0] == 200
             version = rpc(name, 'system.client_version')
@@ -169,7 +210,7 @@ def check_web(name):
 def check_runtime(name):
     limits = command(['docker', 'inspect', '--format', '{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{.HostConfig.MemoryReservation}} {{.HostConfig.NanoCpus}}', name]).decode().strip()
     assert limits == '0 0 0 0', 'RAM/CPU runtime limits changed'
-    for service in ('flood', 'rtorrent'):
+    for service in ('flood', 'rtorrent', 'rtcheck'):
         pid = command(['docker', 'exec', name, 'supervisorctl', '-c', '/etc/supervisord.conf', 'pid', service]).decode().strip()
         assert pid.isdecimal() and int(pid) > 0
         status = command(['docker', 'exec', name, 'cat', '/proc/' + pid + '/status']).decode()
@@ -200,6 +241,26 @@ def bencode(value):
     raise TypeError()
 
 
+def wait_committed(name, torrent_hash, marker=b''):
+    # The known concurrent-save failure is an explicitly accepted release risk.
+    # These fixtures exercise restart/upgrade after a completed save.
+    probe = """import pathlib,sys,time
+p=pathlib.Path('/torrents/config/rtorrent/session')
+h=sys.argv[1]
+marker=bytes.fromhex(sys.argv[2])
+deadline=time.monotonic()+60
+while time.monotonic()<deadline:
+    sidecar=p/(h+'.torrent.rtorrent')
+    if (p/(h+'.torrent')).is_file() and sidecar.is_file() and not list(p.glob(h+'*.new')):
+        if not marker or marker in sidecar.read_bytes():
+            break
+    time.sleep(0.1)
+else:
+    raise SystemExit('Session save did not commit')
+"""
+    command(['docker', 'exec', name, 'python3', '-c', probe, torrent_hash, marker.hex()], timeout=75)
+
+
 def seed(name):
     payload = b'Appbox Flood release persistence fixture\n' * 100
     info = {b'name': b'flood-gate.bin', b'length': len(payload), b'piece length': 16384,
@@ -216,8 +277,10 @@ def seed(name):
             break
         time.sleep(1)
     assert torrent_hash in rpc(name, 'download_list')
+    wait_committed(name, torrent_hash)
     rpc(name, 'd.custom1.set', torrent_hash, 'release-preserved')
     rpc(name, 'session.save')
+    wait_committed(name, torrent_hash, b'release-preserved')
     command(['docker', 'exec', name, 'sh', '-c', "printf '\n# release-gate preserved configuration\n' >> /torrents/config/rtorrent/.rtorrent.rc"])
     return torrent_hash, hashlib.sha256(payload).hexdigest()
 
@@ -240,10 +303,12 @@ def check_persisted(name, fixture):
 
 
 try:
+    command([sys.executable, str(Path(__file__).with_name('test-callback.py'))])
     details = json.loads(command(['docker', 'image', 'inspect', image]))[0]
     assert details['Architecture'] == 'amd64' and details['Os'] == 'linux'
     version = command(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'flood', image, '--version']).decode()
     assert '4.16.1' in version
+    print('ACCEPTED RISK: rTorrent #2017; restart and upgrade tests use completed saves', flush=True)
     fresh = launch('fresh', image, storage('fresh'))
     wait_ready(fresh, '0.16.23')
     check_web(fresh)
@@ -263,13 +328,49 @@ try:
             break
         time.sleep(1)
     assert callback_token in callbacks, 'Authenticated install callback missing'
+    assert 'Appbox-Flood/4.16.1' in callback_agents, 'Identifiable callback user agent missing'
     fixture = seed(fresh)
     print('PASS fresh: versions, HTTP/assets, authentication, RPC, ports, callback and torrent session', flush=True)
     command(['docker', 'restart', '--time', '45', fresh])
     wait_ready(fresh, '0.16.23')
     check_persisted(fresh, fixture)
+    check_runtime(fresh)
     assert native_user_id(fresh) == fresh_user_id
     print('PASS restart: data, torrent state, settings and authentication preserved', flush=True)
+    # Exercise the separate-token contract too, including the first release's
+    # data and a downgrade back to the same engine/UI version.
+    current_storage = storage('current')
+    current = launch('current', registry.CURRENT, current_storage, callback_style='header')
+    wait_ready(current, '0.16.23')
+    current_fixture = seed(current)
+    current_user_id = native_user_id(current)
+    command(['docker', 'stop', '--time', '45', current])
+    callbacks.clear()
+    repaired = launch('repaired', image, current_storage)
+    wait_ready(repaired, '0.16.23')
+    check_persisted(repaired, current_fixture)
+    assert native_user_id(repaired) == current_user_id
+    for _ in range(30):
+        if callback_token in callbacks:
+            break
+        time.sleep(1)
+    assert callback_token in callbacks, 'Legacy-format upgrade callback missing'
+    command(['docker', 'stop', '--time', '45', repaired])
+    command(['docker', 'start', current])
+    wait_ready(current, '0.16.23')
+    check_persisted(current, current_fixture)
+    assert native_user_id(current) == current_user_id
+    command(['docker', 'stop', '--time', '45', current])
+    print('PASS current-release upgrade and downgrade: data and user preserved; legacy callback acknowledged', flush=True)
+    callbacks.clear()
+    header = launch('header', image, storage('header'), callback_style='header')
+    wait_ready(header, '0.16.23')
+    for _ in range(30):
+        if callback_token in callbacks:
+            break
+        time.sleep(1)
+    assert callback_token in callbacks, 'Separate-token callback missing'
+    print('PASS separate-token callback', flush=True)
     upgrade_storage = storage('upgrade')
     baseline = launch('baseline', registry.PREVIOUS, upgrade_storage, baseline=True)
     wait_ready(baseline, None)
@@ -319,4 +420,4 @@ finally:
         shutil.rmtree(work)
 
 registry.require_absent(image)
-print('PASS all release gates', flush=True)
+print('PASS required release gates; concurrent-save regression remains an accepted exception', flush=True)
